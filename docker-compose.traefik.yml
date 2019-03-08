@@ -4,40 +4,34 @@ networks:
   net:
     driver: overlay
     attachable: true
-  traefik-public:
+  proxy:
     external: true
 
 volumes:
-    prometheus: {}
-    grafana: {}
-    alertmanager: {}
+  prometheus:
+    driver_opts:
+      type: "nfs"
+      o: "addr=192.168.50.200,nolock,soft,rw"
+      device: ":/srv/nvme/cluster1/practica_prometheus/prometheus"
+  grafana:
+    driver_opts:
+      type: "nfs"
+      o: "addr=192.168.50.200,nolock,soft,rw"
+      device: ":/srv/nvme/cluster1/practica_prometheus/grafana"
+  alertmanager:
+    driver_opts:
+      type: "nfs"
+      o: "addr=192.168.50.200,nolock,soft,rw"
+      device: ":/srv/nvme/cluster1/practica_prometheus/alertmanager"
+
 
 configs:
-  dockerd_config:
-    file: ./dockerd-exporter/Caddyfile
   node_rules:
-    file: ./prometheus/rules/swarm_node.rules.yml
+    file: /srv/docker/swarmprom/prometheus/rules/swarm_node.rules.yml
   task_rules:
-    file: ./prometheus/rules/swarm_task.rules.yml
+    file: /srv/docker/swarmprom/prometheus/rules/swarm_task.rules.yml
 
 services:
-  dockerd-exporter:
-    image: stefanprodan/caddy
-    networks:
-      - net
-    environment:
-      - DOCKER_GWBRIDGE_IP=172.18.0.1
-    configs:
-      - source: dockerd_config
-        target: /etc/caddy/Caddyfile
-    deploy:
-      mode: global
-      resources:
-        limits:
-          memory: 128M
-        reservations:
-          memory: 64M
-
   cadvisor:
     image: google/cadvisor
     networks:
@@ -59,8 +53,6 @@ services:
 
   grafana:
     image: stefanprodan/swarmprom-grafana:5.3.4
-    networks:
-      - net
     environment:
       - GF_SECURITY_ADMIN_USER=${ADMIN_USER:-admin}
       - GF_SECURITY_ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin}
@@ -86,25 +78,16 @@ services:
         reservations:
           memory: 64M
       labels:
-        - traefik.frontend.rule=Host:grafana.${DOMAIN}
-        - traefik.enable=true
+        - traefik.frontend.rule=Host:grafana.dev.lan
         - traefik.port=3000
-        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
-        - traefik.docker.network=traefik-public
-        # Traefik service that listens to HTTP
-        - traefik.redirectorservice.frontend.entryPoints=http
-        - traefik.redirectorservice.frontend.redirect.entryPoint=https
-        # Traefik service that listens to HTTPS
-        - traefik.webservice.frontend.entryPoints=https
+        - traefik.docker.network=proxy
     networks:
       - default
       - net
-      - traefik-public
+      - proxy
 
   alertmanager:
     image: stefanprodan/swarmprom-alertmanager:v0.14.0
-    networks:
-      - net
     environment:
       - SLACK_URL=${SLACK_URL:-https://hooks.slack.com/services/TOKEN}
       - SLACK_CHANNEL=${SLACK_CHANNEL:-general}
@@ -126,48 +109,32 @@ services:
         reservations:
           memory: 64M
       labels:
-        - traefik.frontend.rule=Host:alertmanager.${DOMAIN}
-        - traefik.enable=true
+        - traefik.frontend.rule=Host:alertmanager.dev.lan
         - traefik.port=9093
-        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
-        - traefik.docker.network=traefik-public
-        # Traefik service that listens to HTTP
-        - traefik.redirectorservice.frontend.entryPoints=http
-        - traefik.redirectorservice.frontend.redirect.entryPoint=https
-        # Traefik service that listens to HTTPS
-        - traefik.webservice.frontend.entryPoints=https
-        - traefik.frontend.auth.basic.users=${ADMIN_USER}:${HASHED_PASSWORD}
+        - traefik.docker.network=proxy
     networks:
       - default
       - net
-      - traefik-public
+      - proxy
 
-  unsee:
-    image: cloudflare/unsee:v0.8.0
-    networks:
-      - net
-    environment:
-      - "ALERTMANAGER_URIS=default:http://alertmanager:9093"
-    deploy:
-      mode: replicated
-      replicas: 1
-      labels:
-        - traefik.frontend.rule=Host:unsee.${DOMAIN}
-        - traefik.enable=true
-        - traefik.port=8080
-        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
-        - traefik.docker.network=traefik-public
-        # Traefik service that listens to HTTP
-        - traefik.redirectorservice.frontend.entryPoints=http
-        - traefik.redirectorservice.frontend.redirect.entryPoint=https
-        # Traefik service that listens to HTTPS
-        - traefik.webservice.frontend.entryPoints=https
-        - traefik.frontend.auth.basic.users=${ADMIN_USER}:${HASHED_PASSWORD}
-    networks:
-      - default
-      - net
-      - traefik-public
-
+#  unsee:
+#    image: cloudflare/unsee:v0.8.0
+#    networks:
+#      - net
+#    environment:
+#      - "ALERTMANAGER_URIS=default:http://alertmanager:9093"
+#    deploy:
+#      mode: replicated
+#      replicas: 1
+#      labels:
+#        - traefik.frontend.rule=Host:unsee.dev.lan
+#        - traefik.port=8080
+#        - traefik.docker.network=proxy
+#    networks:
+#      - default
+#      - net
+#      - proxy
+#
   node-exporter:
     image: stefanprodan/swarmprom-node-exporter:v0.16.0
     networks:
@@ -195,8 +162,6 @@ services:
 
   prometheus:
     image: stefanprodan/swarmprom-prometheus:v2.5.0
-    networks:
-      - net
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -220,18 +185,10 @@ services:
         reservations:
           memory: 128M
       labels:
-        - traefik.frontend.rule=Host:prometheus.${DOMAIN}
-        - traefik.enable=true
+        - traefik.frontend.rule=Host:prometheus.dev.lan
         - traefik.port=9090
-        - traefik.tags=${TRAEFIK_PUBLIC_TAG:-traefik-public}
-        - traefik.docker.network=traefik-public
-        # Traefik service that listens to HTTP
-        - traefik.redirectorservice.frontend.entryPoints=http
-        - traefik.redirectorservice.frontend.redirect.entryPoint=https
-        # Traefik service that listens to HTTPS
-        - traefik.webservice.frontend.entryPoints=https
-        - traefik.frontend.auth.basic.users=${ADMIN_USER}:${HASHED_PASSWORD}
+        - traefik.docker.network=proxy
     networks:
       - default
       - net
-      - traefik-public
+      - proxy
